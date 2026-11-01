@@ -1,0 +1,11 @@
+[project]
+name = "soli-attr"
+version = "0.1.0"
+description = "Spectral attribution stability in radar gesture recognition (COSC 750, Stage 3)"
+requires-python = ">=3.9"
+dependencies = ["numpy", "scipy", "scikit-learn", "scikit-image", "pandas", "h5py", "torch", "matplotlib", "pytest"]
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,16 @@
+name: soli-attr
+channels: [conda-forge, pytorch]
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - scikit-learn
+  - scikit-image
+  - pandas
+  - h5py
+  - matplotlib
+  - tabulate
+  - pytest
+  - pytorch
+  - pip
+  - pip: ["-e ."]
