@@ -36,14 +36,15 @@
   \texttt{oludayoa0130@students.bowiestate.edu}
 }
 
-\date{COSC 750 Pattern Recognition I --- Fall 2026 --- Stage 3 of 4: Methodology and Baselines}
+\date{COSC 750 Pattern Recognition I --- Fall 2026}
 
+\emergencystretch=2em
 \begin{document}
 \maketitle
 \vspace{-1.6em}
 
 \begin{abstract}
-Radar gesture recognizers are judged by accuracy, and their explanations are usually a single attribution map shown as a figure. This project asks whether those maps stay put when the radar signal changes in realistic ways. On the Google Soli data I train a CNN and an RBF-SVM under a user-grouped 4-fold protocol, explain both on a shared 8$\times$8 Doppler--time grid, apply band masking, magnitude smoothing and a noise-floor shift, and measure how far the maps move on sequences that every model still classifies correctly. A map change counts only if it exceeds the seed-to-seed floor. The literature review (Stage 2) found that realistic corruption has been studied through accuracy and explanation fragility only under adversarial attack. This stage adds the formal problem, the measurement protocol, five baselines and first stability results. Mean accuracy over 4 folds $\times$ 5 repeats is 9.1\% (majority), 64.1\% (PCA + Gaussian Bayes), 81.2\% (RBF-SVM), 89.4\% (project CNN) and 91.2\% (CNN--RNN); a random split would have lifted the SVM to 93.8\%. The hypothesis that CNN maps leave their floor before accuracy falls is not supported: it held in 0 of 1{,}200 run-level cases, and Grad-CAM maps cross the floor only after accuracy has fallen by about 9 points or more. The SVM's maps are steadier, but its accuracy is far more sensitive to a noise-floor shift. CNN and SVM maps do not agree with each other (Spearman $-0.15$).
+Radar gesture recognizers are judged by accuracy, but their explanations are usually one attribution map shown as a figure. This project asks whether those maps stay put when the radar signal changes. On the Google Soli data I train a CNN and an RBF-SVM under a user-grouped 4-fold protocol, explain them on a shared 8$\times$8 Doppler--time grid with Grad-CAM, occlusion and Integrated Gradients (SVM: occlusion on its pairwise margins), and perturb the input in five ways: band masking, smoothing, a raised noise floor, additive noise at a set SNR and static zero-Doppler clutter. A map change counts only if it exceeds the seed-to-seed floor, and I test whether maps change \emph{before} accuracy falls by 2 points. They do not for the CNN: the condition held in 0 of 1{,}800 run-level cases across three attribution methods, and the result survives a change of similarity measure, cohort and grid size. Deleting the cells a map ranks highest costs the CNN far more accuracy than deleting random cells (40\% against 64\% after eight of 64 cells for Grad-CAM), so the maps are faithful as well as stable. Map change and accuracy loss are strongly correlated across severities (Spearman $-0.87$ to $-0.89$) and only weakly within one severity ($r=-0.26$ to $-0.44$). The SVM's maps are steadier, but its accuracy collapses under a raised floor or noise (51 and 55 points where the CNN loses about 10). Accuracy on unseen users is 64.1\% (Gaussian Bayes), 81.2\% (SVM), 89.4\% (CNN) and 91.2\% (CNN--RNN). Code and results reproduce with one command.
 \end{abstract}
 
 \noindent\textbf{Keywords:} pattern recognition; micro-Doppler radar; gesture recognition; attribution; explanation stability; support vector machine
@@ -52,11 +53,26 @@ Radar gesture recognizers are judged by accuracy, and their explanations are usu
 \section{Introduction}
 A micro-Doppler gesture recognizer maps an input $x$ built from range-Doppler maps to one of $c$ gesture classes $\omega_1,\dots,\omega_c$. Accuracy on Soli is already high, so the harder question is whether a correct prediction is correct for reasons that survive ordinary changes in the signal chain. Noise floor, spectral leakage and windowing all reshape a micro-Doppler map. If an explanation moves under mild filtering while the label stays put, anyone who tuned a gesture interface by reading that explanation tuned it to something unstable.
 
-\textbf{Data, as corrected in this stage.} I use the \texttt{deep-soli} release of Soli~\citep{wang2016soli}: 5{,}500 HDF5 sequences of four-channel $32\times32$ range-Doppler frames in 12 classes. Eleven are gestures with 475 sequences each; the twelfth is a background class (275 sequences) that belongs to no user, so I leave it out ($n=5{,}225$ remain). A scan of all 5{,}500 files shows 28 to 145 frames per sequence (median 56), not the fixed 68 I stated in Stages 1 and 2, so every sequence is resampled to 32 frames. It also found no label that changes within a file, none that disagrees with its file name and no non-finite value, which closes the Stage 2 label check.
+\textbf{Data, as corrected in this stage.} I use the \texttt{deep-soli} release of Soli~\citep{wang2016soli}: 5{,}500 HDF5 sequences of four-channel $32\times32$ range-Doppler frames in 12 classes. Eleven are gestures with 475 sequences each; the twelfth is a background class (275 sequences) that belongs to no user, so I leave it out ($n=5{,}225$ remain). A scan of all 5{,}500 files shows 28 to 145 frames per sequence (median 56), not the fixed 68 I stated in Stages 1 and 2, so every sequence is resampled to 32 frames (Fig.~\ref{fig:data} shows one). It also found no label that changes within a file, none that disagrees with its file name and no non-finite value, which closes the Stage 2 label check.
 
-\textbf{Research question (unchanged from Stage 2).} \emph{On correctly classified Soli sequences, under three sensor-motivated frequency-domain perturbations at matched severity, how much do attribution maps of a CNN and an SVM change, and do they change measurably before accuracy falls?} \textbf{Hypothesis H:} for some perturbation and severity, the clean-versus-perturbed map similarity falls below the seed-to-seed floor while accuracy has dropped by less than 2 percentage points. This is my definition of a \emph{useful outcome}: a statistically significant map change does not count unless it also clears the floor and comes early, before accuracy gives the problem away.
+\begin{figure}[!tb]
+\centering
+\includegraphics[width=\textwidth]{figures/data_overview.png}
+\caption{One Soli sequence (gesture 5) after resampling to 32 frames. \textbf{(a)}~All 32 range-Doppler frames of channel 0 (top 16 range rows, 32 Doppler bins). The bright column at Doppler bin 16 is the static, zero-velocity component and is present in almost every frame. The blob sits on this ridge, moves left in frames 11--14, jumps right in frames 15--18 (the ridge nearly vanishes in 16--17), then returns to the centre by frame 19. \textbf{(b)}~The four receive channels at frame 16 show the same event with slightly different shapes. \textbf{(c)}~The Doppler--time map that the SVM, Bayes classifier and project CNN read (mean over channels and range): the ridge is the vertical line, and the gesture is the horizontal excursion around frames 11--18. Single example, for illustration.}
+\label{fig:data}
+\end{figure}
 
-\textbf{Course topics and contributions.} Bayes decision theory and 0--1 risk, Gaussian density estimation with PCA (B1a), a kernel SVM (B1b), convolutional and recurrent networks (CNN, B2) and the bias--variance argument behind the seed floor. Contributions: (1)~a protocol for attribution stability on radar spectra that conditions on correct predictions, reports retention, and compares every change with a floor; (2)~five baselines on a user-grouped split, with variance and a measured leakage gap of 12.6 accuracy points; (3)~first stability results, one of them negative, and a repository that rebuilds the baseline table with one command.
+\textbf{Research questions.} The project has had one question since Stage 1; here I split it into the three it contains and answer each in Section~\ref{sec:disc}.
+\begin{itemize}
+\item \textbf{RQ1.} How does attribution stability depend on the type and severity of the perturbation?
+\item \textbf{RQ2.} Under which conditions (perturbation, severity, CNN or SVM, before or after accuracy falls) do maps change measurably more than retraining noise?
+\item \textbf{RQ3.} Is the loss of stability correlated with the loss of accuracy?
+\end{itemize}
+\textbf{Hypothesis H:} for some perturbation and severity, the clean-versus-perturbed map similarity falls below the seed-to-seed floor while accuracy has dropped by less than 2 percentage points. This is my definition of a \emph{useful outcome}: a statistically significant map change does not count unless it also clears the floor and comes early, before accuracy gives the problem away.
+
+\textbf{Course topics.} Bayes decision theory and 0--1 risk, Gaussian density estimation with PCA (B1a), a kernel SVM (B1b), convolutional and recurrent networks (CNN, B2) and the bias--variance argument behind the seed floor and the learning curves.
+
+\textbf{Contributions.} (1)~A protocol for attribution stability on radar spectra that conditions on correct predictions, reports retention and compares every change with a floor measured from retraining. (2)~A negative result with its checks: H fails for three CNN attribution methods under five perturbations, including additive noise and clutter, and the failure does not depend on the similarity measure, the cohort, the grid or the attribution method. (3)~A deletion test showing that the maps being tested are faithful, and a continuous SVM score that removes a suspected artefact in the SVM floor. (4)~Five baselines on a user-grouped split with variance, a measured leakage gap of 12.6 points, learning curves and a larger SVM search. (5)~A repository that rebuilds every table and figure with one command.
 
 %==================================================================
 \section{Related Work}
@@ -112,7 +128,7 @@ Radar models are shown robust by accuracy and explanations fragile by attack, bu
 \end{equation}
 Each model learns its own $g_i$: Gaussian class-conditionals on PCA scores (B1a), the one-vs-rest scores of an RBF-SVM (B1b), or network logits (CNN, CNN--RNN). Accuracy estimates $1-R$; the classes are nearly balanced, so macro-F1 is a check, not a different target. Sequences from one user are correlated, so independence holds across users, not sequences, and the target is the expected risk on \emph{unseen users}.
 
-\textbf{Attributions and perturbations.} For a trained model $f$, input $x$ and class $y$, an attribution map $a_f(x,y)\in\mathbb{R}^{G\times G}$ lives on an $8\times8$ grid of time blocks and Doppler bands ($G=8$; each cell is 4 frames by 4 Doppler bins), the same grid for every model. A perturbation $\pi_{\kappa,s}$ has a kind $\kappa\in\{\text{band mask},\text{smooth},\text{floor shift}\}$ and a strength $s\in[0,1]$.
+\textbf{Attributions and perturbations.} For a trained model $f$, input $x$ and class $y$, an attribution map $a_f(x,y)\in\mathbb{R}^{G\times G}$ lives on an $8\times8$ grid of time blocks and Doppler bands ($G=8$; each cell is 4 frames by 4 Doppler bins), the same grid for every model. A perturbation $\pi_{\kappa,s}$ has a kind $\kappa\in\{\text{band mask},\text{smooth},\text{floor shift},\text{noise},\text{clutter}\}$ and a strength $s\ge0$.
 
 \textbf{Quantities.} Let $\mathcal C$ be a cohort of test sequences that all models classify correctly, $\tilde a$ a normalised map (Eq.~\ref{eq:norm}) and $\rho$ a similarity. Stability and the floor are
 \begin{equation}
@@ -123,7 +139,7 @@ F=\Ex_{x\in\mathcal C}\,\rho\big(\tilde a_{f_A}(x,y),\,\tilde a_{f_B}(x,y)\big),
 \end{equation}
 where $f_A,f_B$ differ only in their training seed and $F$ is evaluated on clean input. With $A_\kappa(s)$ the drop in test accuracy, H says: for some $\kappa,s$, $\Delta_\kappa(s)<F$ and $A_\kappa(s)<2$ points.
 
-\textbf{Assumptions.} Independence across users; the pooled Doppler--time map as an adequate stand-in for the signal chain (untested, see Section~\ref{sec:res}); an $8\times8$ grid fine enough to localise evidence. I test the labels, the Doppler axis, split leakage, and (by sanity checks) that maps depend on what the model learned.
+\textbf{Assumptions.} Independence across users; the pooled Doppler--time map as an adequate stand-in for the signal chain (untested, see Section~\ref{sec:res}); an $8\times8$ grid fine enough to localise evidence (Stage 4 varies it, Table~\ref{tab:grid}). I test the labels, the Doppler axis, split leakage, and (by sanity checks) that maps depend on what the model learned.
 
 %==================================================================
 \section{Method}\label{sec:method}
@@ -147,12 +163,14 @@ so only the distribution of positive evidence matters.
 
 \textbf{Similarity.} Spearman rank correlation over the 64 cells ($\rho$, the primary measure; scale-free and not dominated by a few cells), top-10 cell overlap, and SSIM with a $3\times3$ window. The three order the conditions alike (rank correlation 0.89 and 0.88 with $\rho$ over the 90 summary rows), so I report $\rho$.
 
+\textbf{Stage 4 additions.} \emph{Integrated Gradients} (IG)~\citep{sundararajan2017ig}: my own implementation, 16 Riemann steps from the training-mean input to $x$ along a straight path, gradient of the true-class logit, summed over each grid cell and normalised by Eq.~\eqref{eq:norm}. \emph{SVM margin score:} scikit-learn's one-vs-rest score adds integer vote counts, so I also score a class by the mean of its signed pairwise (one-vs-one) margins, a continuous quantity, and run occlusion on it. \emph{Two further perturbations.} \emph{Noise} adds Gaussian noise at a set signal-to-noise ratio, $\mathrm{SNR}=-20\log_{10}s$ dB, with a fixed noise draw for reproducibility, and clips at zero (intensities are non-negative). \emph{Clutter} adds a static ridge at zero Doppler (a Gaussian of width 1.5 bins centred at bin 16, constant over time) of amplitude $s$ times the sequence peak, the signature of stationary reflectors. Both are calibrated like the others. \emph{Deletion faithfulness:} for a model and its maps, replace the $k$ highest-ranked of the 64 cells by the training mean, and compare the accuracy on the cohort with deleting $k$ random cells (mean of 5 draws) or the $k$ lowest-ranked ones. A faithful map makes the top-$k$ deletion hurt most~\citep{samek2017evaluating,petsiuk2018rise}.
+
 \begin{algorithm}[!tb]
 \caption{Attribution stability for one fold and repeat}\label{alg:stab}
 \begin{algorithmic}[1]
-\State Fit $f_A,f_B$ (seeds $\sigma,\sigma{+}1000$) and $h$ on train users; choose hyper-parameters on validation users
+\State Fit $f_A,f_B$ (seeds $\sigma,\sigma{+}1000$) and $h$ on train users; choose hyper-parameters on validation users (Stage 4: also refit $h$ on 80\% of the training set for its floor)
 \State $\mathcal C\leftarrow$ 150 random test sequences that $f_A,f_B,h$ all classify correctly
-\State Clean maps $\tilde a_{f_A},\tilde a_{f_B},\tilde a_h$ on $\mathcal C$; floors $F$; sanity maps (random-weight CNN, label-permuted SVM)
+\State Clean maps (Grad-CAM, occlusion, IG for $f_A,f_B$; occlusion on votes and margins for $h$) on $\mathcal C$; floors $F$; sanity maps; deletion test
 \For{each $\kappa$ and target level ($\tau$ or $\delta$)}
   \State Pick $s$ by bisection on validation users; perturb $\mathcal C$ and all test users; record test accuracy of $f_A$ and $h$
   \State Recompute maps; $\rho$, top-10, SSIM against the clean maps, over all of $\mathcal C$ and over the retained sequences
@@ -160,7 +178,7 @@ so only the distribution of positive evidence matters.
 \end{algorithmic}
 \end{algorithm}
 
-\textbf{Why it should work.} \emph{Conditioning:} Eq.~\eqref{eq:bayes} makes the decision depend on $\argmax_i g_i$, so if the label flips any map of the true class changes for a trivial reason. A clean-correct cohort removes that cause, and the retention $r_\kappa(s)=|\{x\in\mathcal C:\hat\omega(\pi_{\kappa,s}x)=y\}|/|\mathcal C|$ shows how selective the survivors are. \emph{Floor:} a map is an estimator that depends on a finite training sample and on initialisation, so it has variance; $F$ measures it, and a change smaller than $1-F$ cannot be told from retraining noise. \emph{Severity matching:} SSIM makes kinds comparable in how much structure they destroy, the accuracy target in how much decision-relevant evidence; I added the second when the first did not track accuracy. \emph{SVM:} for an RBF kernel each binary decision function $\sum_i\alpha_i y_i k(x_i,\cdot)+b$ is Lipschitz in feature space with constant at most $(\sum_i|\alpha_i|)\sqrt{2\gamma}$, since $\|\phi(x)-\phi(x')\|^2=2-2k(x,x')\le2\gamma\|x-x'\|^2$, so small input changes move its scores by a bounded amount. The bound is loose, and scikit-learn's one-vs-rest score adds integer vote counts that can jump, so it gives direction only. For a ReLU network no useful bound exists, and Grad-CAM gradients change across activation boundaries, the fragility \citet{ghorbani2019fragile} describe.
+\textbf{Why it should work.} \emph{Conditioning:} Eq.~\eqref{eq:bayes} makes the decision depend on $\argmax_i g_i$, so if the label flips any map of the true class changes for a trivial reason. A clean-correct cohort removes that cause, and the retention $r_\kappa(s)=|\{x\in\mathcal C:\hat\omega(\pi_{\kappa,s}x)=y\}|/|\mathcal C|$ shows how selective the survivors are. \emph{Floor:} a map is an estimator that depends on a finite training sample and on initialisation, so it has variance; $F$ measures it, and a change smaller than $1-F$ cannot be told from retraining noise. \emph{Severity matching:} SSIM makes kinds comparable in how much structure they destroy, the accuracy target in how much decision-relevant evidence; I added the second when the first did not track accuracy. \emph{SVM:} for an RBF kernel each binary decision function $\sum_i\alpha_i y_i k(x_i,\cdot)+b$ is Lipschitz in feature space with constant at most $(\sum_i|\alpha_i|)\sqrt{2\gamma}$, since $\|\phi(x)-\phi(x')\|^2=2-2k(x,x')\le2\gamma\|x-x'\|^2$, so small input changes move its scores by a bounded amount. The bound is loose, so it gives direction only; Stage 4 tested the suspicion that integer vote counts, which can jump, inflate the SVM's floor, and it was wrong (Section~\ref{sec:ext}). For a ReLU network no useful bound exists, and Grad-CAM gradients change across activation boundaries, the fragility \citet{ghorbani2019fragile} describe.
 
 \textbf{Complexity.} Training: Bayes $O(nd^2+nd'^2+c\,d'^3)$ ($d=128$ features, $d'$ PCA components); SVM between $O(n^2d)$ and $O(n^3)$; CNNs $O(E\,n\,\mathrm{FLOPs})$ for $E\le30$ epochs. Grad-CAM costs one forward and one backward pass, occlusion $G^2=64$ extra forward passes per sequence; one stability run took 41--58 s.
 
@@ -172,9 +190,11 @@ so only the distribution of positive evidence matters.
 
 \textbf{Protocol and metrics.} Each fold is repeated 5 times with different validation users and seeds (seed $=100\cdot\text{fold}+\text{repeat}$; the second CNN uses $+1000$). I report accuracy and macro-F1 as mean $\pm$ sd over the 5 repeats of the fold-averaged score, plus per-fold means and the sd across folds, the honest measure of movement between users. Significance uses paired $t$-tests on the four fold means ($n=4$; runs within a fold share test users and are not independent); with four comparisons I read $p<0.0125$ as significant. Runs used Google Colab with one CUDA GPU and Python 3.13; a tuned fit took about 1 s (Bayes, SVM), 2--17 s (CNN) and 72--144 s (CNN--RNN), and all baselines took 39 min.
 
-\emph{Fixed before any test-user result was seen:} split design, baselines, grids and budget, accuracy and macro-F1, the three similarity measures, the floor, and the 2-point criterion in H. \emph{Changed after a first stability run, hence exploratory:} two defective perturbations were redefined (the first noise-floor shift changed nothing; band masking collapsed three severity levels into one); milder SSIM levels and the accuracy-matched calibration were added; the SVM got its own floor (a refit on a random 80\% of its training sequences) instead of the CNN's; and tests moved from 20 runs to four folds. None of this touched hyper-parameter selection or the baseline table.
+\textbf{Stage 4 protocol.} The extended experiments use 3 repeats per fold (12 runs) instead of 5 to fit the compute budget; the baseline table above is unchanged (5 repeats). Everything else (splits, seeds $100\cdot\text{fold}+\text{repeat}$, 4-configuration budget, cohort of 150 sequences correct for $f_A$, $f_B$ and $h$, calibration on validation users) is as in Stage 3. The extended run took about 90 min on one Colab GPU (learning curves 8.5 min, SVM search 4 min, stability 6--7.5 min per run).
 
-\textbf{Implementation and reproducibility.}\label{sec:repro} Code: \confirm{GitHub URL} (Python; PyTorch, scikit-learn, scikit-image; \texttt{requirements.txt} and \texttt{environment.yml}). \texttt{make reproduce DATA=SoliData.zip DEVICE=cuda} builds the cache, runs every baseline and writes the table (the Colab run called the same scripts one by one); \texttt{make stability} runs the attribution experiment; \texttt{make smoke} checks the whole pipeline on synthetic data in under a minute; 14 unit tests cover splits, perturbations, metrics and occlusion. The code was written with Claude (see the disclosure), none is taken from the \texttt{deep-soli} repository, and library versions are those pip resolved on Colab (not pinned). GPU kernels are not deterministic, so reruns differ slightly: a first complete run gave 89.0 (CNN) and 90.7 (CNN--RNN) against 89.4 and 91.2 reported here; Bayes, SVM and majority were identical.
+\emph{Fixed before any test-user result was seen:} split design, baselines, grids and budget, accuracy and macro-F1, the three similarity measures, the floor, and the 2-point criterion in H. \emph{Changed after a first stability run, hence exploratory:} two defective perturbations were redefined (the first noise-floor shift changed nothing; band masking collapsed three severity levels into one); milder SSIM levels and the accuracy-matched calibration were added; the SVM got its own floor (a refit on a random 80\% of its training sequences) instead of the CNN's; and tests moved from 20 runs to four folds. None of this touched hyper-parameter selection or the baseline table. \emph{Stage 4 analyses:} Integrated Gradients, the margin score, noise and clutter were announced as Stage 4 plans in Stage 3 but run after seeing Stage 3 results; the deletion test, grid, cohort and similarity ablations, the learning curve and the larger SVM search were added in response to the open questions of Stage 3 and are likewise post hoc, and the within-condition correlation was decided after seeing the overall one. All are reported, none was dropped.
+
+\textbf{Implementation and reproducibility.}\label{sec:repro} Code: \url{https://github.com/Adedeji-Olu/SoliAttr-stage3} (Python; PyTorch, scikit-learn, scikit-image; \texttt{requirements.txt} and \texttt{environment.yml}). \texttt{make reproduce DATA=SoliData.zip DEVICE=cuda} builds the cache, runs every baseline and writes the table (the Colab run called the same scripts one by one); \texttt{make stability} runs the Stage 3 attribution experiment and \texttt{make stage4} the extended one and writes every Stage 4 table and figure of this paper (\texttt{scripts/report\_stage4.py}); \texttt{make smoke} checks the whole pipeline on synthetic data in under a minute; 19 unit tests cover splits, perturbations, metrics, occlusion, IG, margin scores and deletion. The Stage 4 additions are documented in the repository README. The code was written with Claude (see the disclosure), none is taken from the \texttt{deep-soli} repository, and library versions are those pip resolved on Colab (not pinned). GPU kernels are not deterministic, so reruns differ slightly: a first complete run gave 89.0 (CNN) and 90.7 (CNN--RNN) against 89.4 and 91.2 reported here; Bayes, SVM and majority were identical.
 
 %==================================================================
 \section{Results}\label{sec:res}
@@ -204,7 +224,7 @@ SVM, random split (leaky) & 93.8 $\pm$ 1.2 & --- & --- & \multicolumn{4}{c}{(5 r
 \label{tab:main}
 \end{table}
 
-\subsection{Preliminary attribution-stability results}
+\subsection{Attribution stability under three perturbations (Stage 3 analysis)}
 \textbf{Sanity checks pass.} Against the trained maps, a random-weight CNN gives Spearman $-0.05\pm0.06$ (Grad-CAM) and $0.09\pm0.06$ (occlusion), and a label-permuted SVM $0.13\pm0.05$, all far below the floors, so the maps depend on what was learned. \textbf{Floors.} Two CNN seeds agree at $\rho=0.866\pm0.019$ (Grad-CAM) and $0.594\pm0.059$ (occlusion); two SVMs fitted on different 80\% subsets at $0.982\pm0.004$. Grad-CAM and occlusion on one CNN agree at 0.46, and CNN and SVM occlusion maps at $-0.15$ with a top-10 overlap of 0.011 against about 0.16 by chance, so maps of different models cannot be compared cell by cell and I compare stability \emph{within} each model.
 
 \begin{figure}[!tb]
@@ -237,27 +257,169 @@ Floor shift & not crossed ($\le$30) & not crossed ($\le$30) & 9.3 & 0.96 / 0.95 
 
 \textbf{The models fail differently.} At strengths that cost the CNN about 10 points, smoothing barely touches the SVM (2.1 points), plausibly because its features pool several Doppler bins; band masking hurts both alike; the noise-floor shift is brutal for the SVM (50.5 points, 40\% of the cohort kept, $\rho=0.79\pm0.26$) and costs the CNN 9.3. \textbf{Selection effect.} Conditioning on survivors flatters stability: under smoothing at SSIM 0.65, Grad-CAM similarity is 0.20 over the cohort but 0.83 over the 17\% still correct, so failing sequences have maps that changed almost completely (about 0.07).
 
-\textbf{Limits.} The perturbations act on the pooled Doppler--time map, not the raw signal chain, and are simulated. Linear resampling to 32 frames discards gesture duration and slightly smooths fast Doppler changes. The SVM score includes vote counts, which may explain its high floor. Twenty runs from four folds on one dataset is a small sample, and the accuracy-matched results are exploratory. \textbf{RQ3.} Over the 600 perturbed conditions per method, map similarity and CNN accuracy drop are rank-correlated at Spearman $-0.92$ (Grad-CAM), $-0.90$ (CNN occlusion) and $-0.93$ (SVM occlusion), and $-0.95$ to $-0.96$ on fold means. Both move with severity, so maps degrade \emph{with} accuracy; this does not show that they warn of it earlier. \textbf{Stage 4.} Physically grounded impairments (noise at a set SNR, low-Doppler clutter, channel gain mismatch) and natural shift across users; Integrated Gradients and a margin-based SVM score; a faithfulness check against the Doppler bins carrying gesture energy; equal SVM tuning effort; a protocol frozen before running.
+\textbf{Limits of this analysis.} The perturbations act on the pooled Doppler--time map, not the raw signal chain, and are simulated. Linear resampling to 32 frames discards gesture duration and slightly smooths fast Doppler changes. Twenty runs from four folds on one dataset is a small sample. Section~\ref{sec:ext} repeats the analysis with two more perturbations, a second attribution method and a continuous SVM score.
+
+\subsection{Extended stability analysis}\label{sec:ext}
+\textbf{Setup.} Twelve runs (4 folds $\times$ 3 repeats), five perturbations, five maps (Grad-CAM, occlusion and IG for the CNN; occlusion on vote counts and on the margin score for the SVM), same cohort rule. \textbf{Sanity and floors.} Trained maps against random-weight CNN maps give Spearman $-0.02$ (Grad-CAM), $0.09$ (occlusion) and $0.02$ (IG), and against label-permuted SVM maps $0.13$ (margin) and $0.13$ (votes), so all five depend on what was learned. The CNN floors reproduce Stage 3 (Table~\ref{tab:h}). IG is far less repeatable than the others (floor 0.32): two CNNs trained on the same data give nearly unrelated IG maps, and IG agrees little with Grad-CAM (0.29) or occlusion (0.37). \textbf{The SVM's high floor is not an artefact of vote counts.} The margin-score floor is 0.987 against 0.981 for votes, and the two maps agree at 0.99, so the Stage 3 suspicion was wrong: the SVM's maps are steady because its decision function is smooth in the 128 block features, not because of integer scores. CNN occlusion and SVM margin maps still disagree ($-0.16$).
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_h.tex}
+\caption{Hypothesis H over 12 runs and 50 conditions (5 perturbations $\times$ 10 calibration levels) $=600$ per map. ``Below floor'': map similarity under the seed floor; ``H met'': also own-model accuracy drop under 2 points. For the CNN, H is met in 0 of 1{,}800.}
+\label{tab:h}
+\end{table}
+
+\textbf{H is not supported for any CNN map.} Of 1{,}800 CNN cases, none had a map below its floor with an accuracy drop under 2 points (Table~\ref{tab:h}); maps leave their floor 170 (Grad-CAM), 55 (occlusion) and 17 (IG) times, always after accuracy has gone. The SVM meets H in 31 (margin) and 33 (votes) of 600, but its floor is 0.987, so a change of 0.013 already counts (Section~\ref{sec:disc}). Table~\ref{tab:cross5} shows how much accuracy the CNN has lost where its maps first cross the floor: 8 to 36 points for Grad-CAM under four perturbations (not crossed under the raised floor), 46 to 76 points for occlusion, and IG almost never. For the SVM the crossing comes at 0 to 30 points, earlier in accuracy terms, again because the floor is tight.
+
+\begin{figure}[!tb]
+\centering
+\includegraphics[width=\textwidth]{figures/stability5.pdf}
+\caption{Spearman similarity between clean and perturbed maps for five perturbations (columns of panels) and four maps, against the own-model accuracy drop at matched severity (mean over 12 runs). Dotted lines: seed floors. A map that signals a problem early would sit below its dotted line at small drops.}
+\label{fig:stab5}
+\end{figure}
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_cross.tex}
+\caption{Own-model accuracy drop (pts) between the last SSIM level with $\rho$ above the floor and the first below it. ``Not crossed'': never below the floor in the tested range.}
+\label{tab:cross5}
+\end{table}
+
+\begin{table}[!tb]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\input{tables/tab_10pt.tex}
+\caption{Strength calibrated to a 10-point CNN drop on validation users. Columns give drops on test users, mean Spearman similarity between clean and perturbed maps for three CNN maps and the SVM margin map, and the share of the 150-sequence cohort the SVM still classifies correctly.}
+\label{tab:ten}
+\end{table}
+
+\textbf{Radar-style impairments behave like the earlier ones for the CNN, and unlike them for the SVM.} At the 10-point strength (Table~\ref{tab:ten}), CNN Grad-CAM and occlusion similarity stays between 0.91 and 0.96 for all five perturbations, including noise and clutter; IG is lower and more variable (0.63 under noise). The SVM again loses little under smoothing (2.3 points) and clutter (4.2) but 51 points under a raised floor and 55 under noise at strengths costing the CNN about 10, with only 34--38\% of the cohort kept and $\rho$ of 0.79--0.81. Clutter, a plausible real-world nuisance, is the mildest for the SVM and the one where Grad-CAM changes most (0.92).
+
+\begin{figure}[!tb]
+\centering
+\includegraphics[width=\textwidth]{figures/svm_stability.pdf}
+\caption{SVM counterpart of Fig.~\ref{fig:stab5}. Top: Spearman similarity of the SVM's margin and vote maps against the SVM's \emph{own} accuracy drop; dotted lines are the SVM floors (0.987 margin, 0.981 votes). Bottom: share of the 150-sequence cohort the SVM still classifies correctly. Mean $\pm$ sd over 12 runs; strengths calibrated to CNN drops of 1, 2, 5 and 10 points.}
+\label{fig:svm}
+\end{figure}
+
+\textbf{SVM against its own accuracy loss.} Fig.~\ref{fig:svm} repeats the analysis from the SVM's side. Under band masking, smoothing and clutter the maps sit at or just below their floors while accuracy barely falls; this is where the 31 cases meeting H come from, and with a floor this tight a change of about 0.01 already counts. Under a raised floor and noise the picture is different: even the mildest calibrated strength costs the SVM 17 to 23 points, so there is no small-drop regime in which a map change could come first. Its maps fall to $\rho\approx0.8$ only once accuracy is largely gone, and only 34--38\% of the cohort is still correct at the strongest level.
+
+\subsection{Faithfulness of the maps}\label{sec:faith}
+A stable map is useful only if it points at evidence the model uses. Table~\ref{tab:faith} and Fig.~\ref{fig:faith} give the cohort accuracy after deleting the top-ranked, random or bottom-ranked cells. For every map, deleting the top cells hurts more than random cells, and deleting the bottom cells hurts least: with four of 64 cells deleted, the CNN keeps 62\% (Grad-CAM top), 31\% (occlusion top) and 42\% (IG top) against 84\% for random cells; paired $t$-tests over the four fold means give $p<0.01$ for each map at $k=4$ and $k=8$. Occlusion ranks best, as it must: it measures deletion directly. Grad-CAM is a weaker but real guide. IG's bottom-ranked cells are about as harmless as random ones at $k=4$ (86\% against 84\%), consistent with its low repeatability. The SVM is fragile in itself: deleting eight random cells already drops it from 100\% on the cohort to 20\%, so its maps rank cells that all matter.
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_faith.tex}
+\caption{Cohort accuracy (\%) after replacing $k$ of 64 grid cells by the training mean: highest-ranked (top), random (mean of 5 draws) or lowest-ranked (bottom). $p$: paired $t$-test on four fold means, top versus random.}
+\label{tab:faith}
+\end{table}
+
+\begin{figure}[!tb]
+\centering
+\includegraphics[width=\textwidth]{figures/faithfulness.pdf}
+\caption{Deletion curves: cohort accuracy against the number $k$ of deleted cells (top, random, bottom ranked) for the CNN maps and the SVM margin map.}
+\label{fig:faith}
+\end{figure}
+
+\subsection{Ablations and sensitivity}
+\textbf{Measurement protocol.} Table~\ref{tab:ablate} counts how often H is met when one choice of the protocol is changed. For the CNN, the answer is zero under Spearman, top-10 overlap and SSIM, and when only still-correct sequences are used. Dropping the floor and using a fixed threshold ($\rho<0.9$) is the only variant that changes the CNN verdict: it would declare H met 83 times for IG and twice for occlusion. These are IG's retraining noise, not early warnings, which is what the floor is for. For the SVM the count falls from 31 to 10 (top-10) and 7 (SSIM).
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_ablate.tex}
+\caption{Cases (of 600 per map) in which H is met under each variant of the measurement protocol.}
+\label{tab:ablate}
+\end{table}
+
+\textbf{Grid size.} Table~\ref{tab:grid} repeats occlusion on 4$\times$4 and 16$\times$16 grids. Finer grids lower the CNN's floor (0.62, 0.59, 0.51) and the 10-point similarity (0.95, 0.94, 0.91), as expected when maps are noisier, but the ordering of floor above perturbed similarity holds at every size; the SVM's floor is 0.98 on all three. The 8$\times$8 choice does not drive the conclusion.
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_grid.tex}
+\caption{Sensitivity to the attribution grid (occlusion). The last column averages over the five perturbations at the 10-point strength; the SVM average includes the 51--55-point drops.}
+\label{tab:grid}
+\end{table}
+
+\textbf{Training-set size and tuning budget.} The learning curves (Table~\ref{tab:curve}, Fig.~\ref{fig:curve}) show the Bayes classifier flat at 64\% from a quarter of the training data, so it is limited by its model (Gaussian classes on PCA scores), not by data, as bias--variance predicts. The SVM and the CNN keep improving (SVM 77.4 to 81.5, CNN 82.6 to 89.2), so more users would help both. A 30-configuration SVM search instead of 4 lifts the SVM from 81.49\% to 82.55\% (paired $p=0.069$, $n=4$), with the best $\gamma=0.002$ at the edge of the grid in 11 of 12 runs, so the SVM may gain slightly more from a still wider search; the CNN stays 7.2 points ahead (89.7\%, $p=0.005$). Class imbalance was not varied: Soli's gesture classes are balanced by design.
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_curve.tex}
+\caption{Test accuracy (\%, mean $\pm$ sd over 12 runs) against the share of training sequences used, with the same tuning budget at every size.}
+\label{tab:curve}
+\end{table}
+
+\begin{figure}[!tb]
+\centering
+\includegraphics[width=0.62\textwidth]{figures/curve.pdf}
+\caption{Learning curves for the three trained baselines.}
+\label{fig:curve}
+\end{figure}
+
+\subsection{Error analysis}
+Fig.~\ref{fig:errors} gives per-gesture recall. The CNN is above 0.90 for eight of 11 gestures, and its failures are concentrated: gesture 0 (recall 0.53) is sent to gesture 10 in 38.5\% of cases, gesture 3 (0.50) to gesture 10 in 29.9\% and to gesture 0 in 16.2\%. These two are also the hardest for the SVM (0.53, 0.60). The CNN--RNN, which reads the full range-Doppler sequence rather than the pooled map, raises them to 0.68 each, which suggests that the pooled Doppler--time map throws away information that separates these gestures. I refer to gestures by index because the label order of the release differs from the paper's, and I did not verify the names. Per-gesture map stability at the 10-point strength is unrelated to per-gesture recall (Spearman 0.32 for Grad-CAM, $-0.28$ for occlusion, 0.22 for SVM margin; all $p>0.3$, $n=11$): hard gestures do not have less stable maps.
+
+\begin{figure}[!tb]
+\centering
+\includegraphics[width=\textwidth]{figures/errors.pdf}
+\caption{Per-gesture recall of the CNN, SVM and CNN--RNN, and the largest CNN confusions.}
+\label{fig:errors}
+\end{figure}
+
+%==================================================================
+\section{Discussion}\label{sec:disc}
+\subsection{Answers to the research questions}
+\textbf{RQ1: type and severity.} Map similarity falls steadily with severity for every perturbation (Fig.~\ref{fig:stab5}). At equal CNN damage (Table~\ref{tab:ten}), the type matters little for Grad-CAM and occlusion (0.91--0.96) and much more for IG (0.63--0.95) and for the SVM, whose maps are barely affected by smoothing and clutter (0.98--0.99) but changed by a raised floor and noise (0.79--0.81), the perturbations that also destroy its accuracy. \textbf{RQ2: conditions.} The CNN's maps never leave their seed floor while accuracy is within 2 points, for any of three attribution methods, five perturbations and ten severities (0 of 1{,}800), and robustly to the measurement choices of Table~\ref{tab:ablate}. When they do leave it, the CNN has already lost 8 points or more (Grad-CAM) or about 46 or more (occlusion). The only cases where H is met are the SVM's (31 of 600), and there the finding is about the floor, not the perturbation: with a floor of 0.987, a map change of 0.013 is called measurable, and the margin score shows this is a property of the SVM's smooth decision function, not of vote counts. In practical terms, \emph{attribution maps of this CNN are not an early-warning signal; they are a faithful (Section~\ref{sec:faith}) and stable explanation, and they stay put until accuracy is already gone.} \textbf{RQ3: correlation.} Across conditions, map similarity and accuracy drop are strongly rank-correlated (Table~\ref{tab:rq3}: $-0.87$ to $-0.89$ for Grad-CAM, occlusion and SVM margin; $-0.56$ for IG). Most of that is shared dependence on severity: after removing each condition's mean the correlation drops to $-0.44$, $-0.26$ and $-0.51$ (IG $-0.16$), still negative and significant ($p<0.001$) but modest. So maps and accuracy degrade together, and there is a weaker run-to-run link between them at the same severity.
+
+\begin{table}[!tb]
+\centering
+\small
+\input{tables/tab_rq3.tex}
+\caption{RQ3. Overall: Spearman correlation between map similarity and own-model accuracy drop over all conditions and runs. Within-condition: Pearson correlation after subtracting each condition's mean (perturbation $\times$ calibration level) from both quantities.}
+\label{tab:rq3}
+\end{table}
+
+\subsection{What the results do and do not show}
+The negative result is informative, not a failure of the method: the floor, the sanity checks and the faithfulness test show the instrument can detect change (the SVM's map changes under noise at $\rho=0.8$), that the maps depend on what was learned, and that the CNN's maps track evidence the model uses. The survivor-only comparison in Section~\ref{sec:res} warns that stability among sequences that stay correct overstates stability overall. The SVM result also cuts the other way: its stable maps coexist with a decision function that breaks under a raised floor, so stable maps are not evidence of a robust model.
+
+\subsection{Limitations and threats to validity}
+\textbf{Internal.} Perturbations were calibrated by the CNN's validation accuracy, so \emph{matched severity} favours the CNN as the reference; the SVM at that strength can be far harder or easier hit (Table~\ref{tab:ten}). A cohort of 150 sequences per run that all three models classify correctly is easy by construction. Deletion by mean replacement creates inputs the models never saw, and occlusion is both a map and the deletion operation, which favours it. Several analyses are post hoc (Section~\ref{sec:setup}). \textbf{Construct.} Perturbations act on the pooled Doppler--time map, not on the raw radar signal chain; noise and clutter are idealised (Gaussian noise, a single stationary ridge) and were not validated against real recordings. The 2-point criterion is a convention; the CNN's non-crossing is not sensitive to it, since accuracy drops of 1 and 2 points were also tested (Fig.~\ref{fig:stab5}), but it is not derived from a user-facing requirement. Linear resampling to 32 frames removes duration. \textbf{External.} One dataset, ten users, one gesture vocabulary, and four folds, one of which has a single test user. Statistical power for paired tests over four fold means is low, so only large effects are detectable. Results for other radar systems, architectures (transformers) or attribution methods (e.g. SHAP) are not covered.
+
+\subsection{Future work}
+Real perturbations from recordings with a second radar configuration or a different environment; the raw range-Doppler and ADC-level signal chain instead of the pooled map; attribution methods designed to be stable (smoothed or ensembled gradients); evaluating whether training for stable attributions changes the SVM--CNN contrast; a wider SVM search, given the best $\gamma$ at the grid edge.
+
+%==================================================================
+\section{Conclusion}
+Under five simulated radar impairments on Google Soli, with unseen-user evaluation and a measured seed floor, I found no condition in which a CNN's attribution maps change measurably while accuracy is still within 2 points of its clean value (0 of 1{,}800 cases across Grad-CAM, occlusion and Integrated Gradients). The maps are faithful (deleting their top cells hurts far more than deleting random ones), stable up to moderate perturbation, and degrade together with accuracy (RQ3: overall $\rho\approx-0.88$, within a condition only $-0.26$ to $-0.44$). RQ1: type matters little for the CNN's Grad-CAM and occlusion maps but a great deal for Integrated Gradients and for the SVM, which fails under a raised noise floor or additive noise while its maps stay put. RQ2: the SVM's apparent early changes come from a very tight floor, and a continuous margin score shows this is not a vote-count artefact. Together, these results say that these explanations can be trusted as descriptions of what the CNN uses but cannot be used to flag a degraded sensor before accuracy does. The code, tables and figures reproduce from the repository with one command.
 
 %==================================================================
 \section*{Response to Feedback}
 \small
 \textbf{Split and leakage (Stage 1).} User-grouped folds from the README's session arrangement, with asserts that no user or session crosses train, validation and test (Sec.~5); the leakage cost is measured (12.6 points). \textbf{Sample-level CNN maps versus dataset-level SVM importance (Stage 1); local SVM explanation (Stage 2).} Both models are explained locally by occlusion on the same $8\times8$ Doppler--time cells, with Grad-CAM as a second CNN map (Sec.~4). \textbf{Selection effect (Stage 1); retention (Stage 2).} One cohort is shared by both CNN seeds and the SVM, and retention and survivor-only similarity are reported (Sec.~6.2). \textbf{Useful outcome (Stage 1).} H needs a drop below a measured seed floor with under 2 points of accuracy loss. \textbf{Session identifiers (Stage 2).} The README gives sessions per user and they drive the split (Sec.~5). \textbf{Units, severity, normalisation, sanity checks, cross-model comparison (Stage 2).} Units are Doppler bins; severity is matched by SSIM and by accuracy drop; maps are sum-to-one normalised; sanity checks pass; cross-model agreement is near zero, so stability is compared within each model.
 
+\textbf{Stage 3.} No separate feedback was issued for Stage 3; my supervisor indicated that the feedback from the earlier stages still applies, so the points above stand. The questions Stage 3 left open were taken up directly: a second attribution method and a continuous SVM score (Sec.~6.3), radar-style impairments (Sec.~6.3), a faithfulness check (Sec.~6.4), sensitivity to the measurement choices, grid, data size and SVM budget (Sec.~6.5), and per-gesture errors (Sec.~6.6). The Stage 3 guess that vote counts inflate the SVM floor was tested and rejected (Sec.~6.3).
+
 \textbf{Corrections to Stage 2.} Frames per sequence are 28--145, not 68; the background class is excluded; the random-plus-held-out-session plan became user-grouped folds (random split only as a leaky reference); B2 is the CNN--RNN, the CNN is the project model, ResNet-18 + LSTM was dropped; the SVM is explained by occlusion, not permutation importance; Spearman is the primary similarity.
 
 %==================================================================
-\section*{AI-Use Disclosure (Stage 3)}
+\section*{AI-Use Disclosure}
 \begin{table}[H]
 \centering
 \footnotesize
-\begin{tabular}{@{}p{1.3cm}p{4.2cm}p{9.8cm}@{}}
+\begin{tabular}{@{}p{2.2cm}p{4.0cm}p{9.2cm}@{}}
 \toprule
 \textbf{Tool} & \textbf{Used for} & \textbf{Extent and verification} \\
 \midrule
-Claude & Repository code and tests, figures, drafting and revision of this paper's text & I ran every experiment on Colab and returned the outputs; every number here comes from those outputs and the CSV files in \texttt{results/}. \confirm{what you personally reviewed, edited and checked} I am responsible for every claim. \\
-Claude & Literature search, metadata checks (Stage 2) & Checked authors, venue and DOI on publisher or Crossref pages; I did not read every paper in full. \confirm{list the papers you read yourself} \\
-None (me) & Database queries and counts; running the experiments & Done by me. Stage 1 and 2 disclosures still apply. \\
+Claude & Repository code and tests (Stage 4 experiments, report script), figures, tables, drafting and revision of this paper's text and slides & I ran every experiment, including the Stage 4 runs, on Colab and returned the outputs; every number here comes from those outputs and the CSV files in \texttt{results/}. I questioned the design choices (resampling, simulated perturbations, SVM attribution), checked the draft against my Stage 1 and 2 papers and the template, and decided what to add to Limits and what to keep. I created the public repository and uploaded the code, results and paper myself. I am responsible for every claim. \\
+Claude, Gemini, Copilot, ChatGPT, Elicit, Consensus & Literature search, metadata checks (Stage 2) & Used to find and screen candidate papers; I checked authors, venue and DOI on publisher or Crossref pages; I did not read every paper in full. \\
+None (me) & Database queries and counts; running the experiments & Done by me. Stage 1--3 disclosures still apply. \\
 \bottomrule
 \end{tabular}
 \end{table}
