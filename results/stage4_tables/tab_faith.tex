@@ -1,0 +1,9 @@
+\begin{tabular}{@{}lcccccccc@{}}\toprule
+ & \multicolumn{4}{c}{delete 4 of 64 cells} & \multicolumn{4}{c}{delete 8 of 64 cells}\\
+\cmidrule(lr){2-5}\cmidrule(l){6-9}
+Map & top & random & bottom & $p$ & top & random & bottom & $p$\\\midrule
+CNN Grad-CAM & 62 & 84 & 97 & $<0.01$ & 40 & 64 & 90 & $<0.01$ \\
+CNN occlusion & 31 & 84 & 98 & $<0.01$ & 17 & 64 & 91 & $<0.01$ \\
+CNN Int. Gradients & 42 & 84 & 86 & $<0.01$ & 21 & 64 & 78 & $<0.01$ \\
+SVM occlusion (margin) & 12 & 41 & 98 & $<0.01$ & 12 & 20 & 97 & $<0.01$ \\
+\bottomrule\end{tabular}

@@ -1,0 +1,9 @@
+\begin{tabular}{@{}lccccccc@{}}\toprule
+ & CNN drop & \multicolumn{3}{c}{CNN $\rho$} & SVM drop & SVM $\rho$ & SVM kept\\
+ & (pts) & Grad-CAM & occl. & IG & (pts) & (margin) & \\\midrule
+Band mask & 7.2 & 0.964 & 0.950 & 0.949 & 11.0 & 0.979 & 84\% \\
+Smoothing & 9.6 & 0.929 & 0.944 & 0.828 & 2.3 & 0.994 & 93\% \\
+Floor shift & 10.3 & 0.964 & 0.952 & 0.929 & 51.1 & 0.794 & 38\% \\
+Noise (SNR) & 9.1 & 0.942 & 0.912 & 0.633 & 55.3 & 0.806 & 34\% \\
+Clutter & 9.8 & 0.922 & 0.929 & 0.810 & 4.2 & 0.982 & 91\% \\
+\bottomrule\end{tabular}
