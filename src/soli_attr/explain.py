@@ -20,6 +20,23 @@ def gradcam(model, X, target):
     return np.concatenate(out, 0)
 
 
+def integrated_gradients(model, X, target, steps=16, grid=C.GRID):
+    """Integrated Gradients (Sundararajan et al., 2017) for the CNN, own implementation. Baseline = training mean
+    (zero in the normalised space); attributions are summed inside each grid cell. Returns [n,grid,grid]."""
+    import torch
+    net, out = model.net.eval(), []
+    for s in range(0, len(X), 64):
+        x = model._t(X[s:s + 64]); t = torch.as_tensor(target[s:s + 64]).long().to(model.device)
+        tot = torch.zeros_like(x)
+        for k in range(1, steps + 1):
+            xi = (x * (k / steps)).clone().requires_grad_(True)
+            g = torch.autograd.grad(net(xi).gather(1, t[:, None]).sum(), xi)[0]
+            tot += g
+        out.append((x * tot / steps).detach().cpu().numpy())
+    ig = np.concatenate(out, 0); n, tt, d = ig.shape
+    return ig.reshape(n, grid, tt // grid, grid, d // grid).sum((2, 4))
+
+
 def occlusion(model, X, target, grid=C.GRID, chunk=2048):
     """Occlusion on the grid: replace one cell by the training mean and record the drop in the
     target-class score. Works for any model with .scores and .mu, so CNN and SVM share a definition."""

@@ -49,6 +49,30 @@ class SkModel:
     def predict(self, X):
         return self.scores(X).argmax(1)
 
+    def margin_scores(self, X):
+        """Continuous SVM class scores from the pairwise one-vs-one margins. scikit-learn's one-vs-rest score adds
+        integer vote counts, which makes occlusion maps coarse; here class k scores the mean signed margin of all
+        pairs that involve k, so the score changes smoothly when a cell is occluded."""
+        assert self.name == "svm"
+        F = block_features(self.norm(X)); last = self.clf.steps[-1]; Z = self.clf.transform(F)
+        old = last.decision_function_shape; last.decision_function_shape = "ovo"
+        try:
+            dec = last.decision_function(Z)
+        finally:
+            last.decision_function_shape = old
+        k = len(self.classes); s = np.zeros((len(Z), k), np.float32); idx = 0
+        for i in range(k):
+            for j in range(i + 1, k):                 # libsvm pair order; a positive margin favours class i
+                s[:, i] += dec[:, idx]; s[:, j] -= dec[:, idx]; idx += 1
+        return _full_scores(self.classes, s / max(k - 1, 1))
+
+
+class MarginView:
+    """Wraps a fitted SVM so that .scores() returns the continuous margin scores (same interface as the models)."""
+    def __init__(self, m): self.m, self.mu = m, m.mu
+    def scores(self, X): return self.m.margin_scores(X)
+    def predict(self, X): return self.m.predict(X)
+
 
 class GaussianBayes:
     """Bayes classifier with Gaussian class-conditionals, g_c(z) = log p(z|c) + log P(c) (Duda et al., ch. 2).

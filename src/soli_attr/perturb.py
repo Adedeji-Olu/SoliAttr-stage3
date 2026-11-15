@@ -9,6 +9,7 @@ from scipy.ndimage import gaussian_filter1d
 from skimage.metrics import structural_similarity
 
 KINDS = ("band_mask", "smooth", "floor_shift")
+PHYS_KINDS = ("snr_noise", "clutter")          # Stage 4: radar-motivated impairments (still simulated)
 
 
 def apply(X, kind, p):
@@ -29,6 +30,15 @@ def apply(X, kind, p):
         # (a quantile-based floor was a no-op: most of each map is ~0, so the quantile was ~0.)
         peak = X.reshape(n, -1).max(axis=1)[:, None, None]
         return np.maximum(X, 0.5 * p * peak).astype(np.float32)
+    if kind == "snr_noise":                       # additive white Gaussian noise; SNR(dB) = -20 log10(p)
+        rng = np.random.default_rng(12345)       # fixed noise realisation => every run sees the same noise
+        rms = np.sqrt((X.reshape(n, -1) ** 2).mean(axis=1))[:, None, None]
+        noise = rng.normal(0.0, 1.0, X.shape).astype(np.float32)
+        return np.maximum(X + p * rms * noise, 0.0).astype(np.float32)   # magnitudes cannot be negative
+    if kind == "clutter":                         # static (zero-Doppler) clutter: constant in time, narrow around the centre bin
+        peak = X.reshape(n, -1).max(axis=1)[:, None, None]
+        prof = np.exp(-0.5 * ((np.arange(d) - d // 2) / 1.5) ** 2).astype(np.float32)
+        return (X + p * peak * prof[None, None, :]).astype(np.float32)
     raise ValueError(kind)
 
 
