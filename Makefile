@@ -25,3 +25,7 @@ smoke:
 
 rq3:
 	python scripts/rq3_correlation.py --results results
+
+stage4:
+	python scripts/run_stage4.py --cache cache --out results --device $(DEVICE)
+	python scripts/report_stage4.py --res results

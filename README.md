@@ -1,6 +1,6 @@
-# Spectral attribution stability in radar gesture recognition (COSC 750, Stage 3)
+# Spectral attribution stability in radar gesture recognition (COSC 750, Stages 3 and 4)
 
-Code for the Stage 3 baselines and the attribution-stability pipeline on Google Soli (`deep-soli`).
+Code for the baselines and the attribution-stability pipeline (Stage 3) and the extended experiments (Stage 4) on Google Soli (`deep-soli`).
 Author: Adedeji Oludayo, Bowie State University.
 
 ## What this repo does
@@ -42,4 +42,32 @@ Normalisers are fitted on training data only; perturbations are applied after th
 
 - **Resampling.** Every sequence is linearly resampled along time to 32 frames (`resample_time` in `src/soli_attr/data.py`). This is needed for a fixed model input, a shared 8x8 explanation grid and fixed perturbation bins. It is lossy: gesture duration is discarded and downsampling slightly smooths fast Doppler changes.
 - **RQ3 correlation.** `make rq3` (or `python scripts/rq3_correlation.py --results results`) writes `results/rq3_correlation.csv`: Spearman correlation between map similarity and CNN accuracy drop over all perturbed conditions and over fold-level means. Both quantities move with severity, so it shows maps degrade with accuracy, not that they warn of it earlier.
-- **Limits and Stage 4.** Perturbations are simulated, not real radar impairments. Planned: physically grounded impairments and natural cross-user shift, Integrated Gradients, a margin-based SVM score, a faithfulness check against Doppler bins with gesture energy, equal SVM tuning, and a protocol frozen before running.
+- **Limits.** Perturbations are simulated on the pooled Doppler-time map, not the raw signal chain (see the paper's limitations section).
+
+## Stage 4 additions
+
+`make stage4` (after `make reproduce`) runs `scripts/run_stage4.py` and `scripts/report_stage4.py`:
+
+- Integrated Gradients (own implementation) as a second CNN attribution family, and a continuous SVM class score built from pairwise margins (the one-vs-rest score includes integer vote counts).
+- Deletion faithfulness: accuracy after deleting the k top-ranked, k random or k bottom-ranked grid cells.
+- Two radar-motivated impairments next to the Stage 3 perturbations: additive noise at a set SNR and static zero-Doppler clutter (both simulated).
+- Sensitivity: attribution grid size (4, 8, 16), training-set size (25, 50, 100 percent) and a 30-configuration SVM search.
+- Stage 4 uses 3 repeats per fold (seed = 100 x fold + repeat, as before). Outputs: `results/stage4_*.csv`.
+
+Main Stage 4 results (12 runs = 4 folds x 3 repeats; details and caveats in `reports/COSC750_F26_Oludayo_Stage4_paper.pdf`):
+
+- Hypothesis H (map similarity below the seed floor while accuracy has dropped by less than 2 points) is met in 0 of 1,800 CNN cases (Grad-CAM, occlusion, Integrated Gradients; five perturbations; ten severities). The SVM meets it in 31 of 600 cases, but its floor is 0.987.
+- Deleting the top-ranked cells hurts accuracy far more than deleting random cells for every map (faithfulness).
+- Map similarity and accuracy drop correlate at Spearman -0.87 to -0.89 across conditions, and -0.26 to -0.44 within one severity level.
+
+Output files (all in `results/`):
+
+| File | Content |
+|---|---|
+| `stage4_stability_runs.csv` | one row per run x perturbation x level x map (similarity, retention, accuracy) |
+| `stage4_faithfulness.csv` | deletion test |
+| `stage4_perclass.csv`, `stage4_grid.csv` | per-gesture stability; grid-size sensitivity |
+| `stage4_curve.csv`, `stage4_svmbudget.csv` | learning curves; 30-configuration SVM search |
+| `stage4_tables/*.tex`, `figs/*.pdf`, `stage4_numbers.json` | every table and figure of the paper's Stage 4 sections, written by `scripts/report_stage4.py` (including `figs/svm_stability.pdf`) |
+
+The extended run took about 90 minutes on one Colab GPU. `python scripts/report_stage4.py --res results` rebuilds the tables and figures from the shipped CSVs in under a minute, without a GPU. `scripts/plot_data_examples.py` draws the data figure (frame montage, channels, Doppler-time map) from the cache. The unit tests (19) run with `PYTHONPATH=src pytest tests`.
